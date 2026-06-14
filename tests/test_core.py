@@ -21,10 +21,11 @@ def test_eval_report_flattens_to_dict():
 
 def test_registry_lookup_and_listing():
     names = list_metrics()
-    assert "search.ndcg_at_k" in names
-    assert "rec.hit_rate_at_k" in names
-    assert "llm.token_f1" in names
-    assert callable(get_metric("search.precision_at_k"))
+    assert "ranking.ndcg_at_k" in names
+    assert "ranking.hit_rate_at_k" in names
+    assert "text.token_f1" in names
+    assert "beyond_accuracy.novelty_at_k" in names
+    assert callable(get_metric("ranking.precision_at_k"))
 
 
 def test_get_unknown_metric_raises():

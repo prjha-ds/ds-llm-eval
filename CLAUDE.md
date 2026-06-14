@@ -5,21 +5,24 @@ behind one consistent API. Import name `ds_llm_eval`; repo `ds-llm-eval` (branch
 
 ## Architecture
 - `src/ds_llm_eval/core/` — shared contracts: `EvalResult`, `Metric` protocol, registry, validation.
-- `src/ds_llm_eval/search/` — IR metrics from qrels/click logs (precision@k, recall@k, F1, MRR, MAP, NDCG).
-- `src/ds_llm_eval/recommendation/` — recsys metrics (HitRate, coverage, novelty, diversity, NDCG@k).
-- `src/ds_llm_eval/llm/` — LLM/agentic metrics (faithfulness, relevancy, correctness) + RAGAS adapters.
+- `src/ds_llm_eval/metrics/` — metrics grouped by **family**, used irrespective of task:
+  `ranking` (precision/recall/F1@k, MRR, MAP, NDCG, hit_rate — search/rec/RAG retrieval),
+  `beyond_accuracy` (coverage, novelty), `text` (exact match, token-F1), `llm_judge` (lazy RAGAS).
+- `src/ds_llm_eval/logging/` — eval loggers (console/JSONL/Langfuse/Multi); `benchmarks/` — benchmark catalog.
 - `src/ds_llm_eval/integrations/` — Langfuse and other tracing/observability sinks (optional deps).
 - Heavy/optional deps (ragas, langfuse, sklearn) live under `[project.optional-dependencies]` and are
   imported lazily inside functions — **never** at module top level. Core import must stay light.
 
 ## Development patterns
-- Every metric is a pure function `metric(predictions, ground_truth, **params) -> float | EvalResult`.
-  Deterministic, side-effect free, vectorized with numpy/pandas where possible.
-- One public concept per module; expose the public surface only via package `__init__.py`.
+- Every metric is a pure **method** on a metric-group class, `metric(predictions, ground_truth,
+  **params) -> EvalResult`. Deterministic, side-effect free, vectorized with numpy/pandas where possible.
+- One metric *family* per module; expose the public surface only via package `__init__.py`.
 - Type-hint everything; data carriers are pydantic v2 models or dataclasses. `mypy --strict` must pass.
 - Validate inputs at the boundary (shapes, empty sets, k bounds) and raise `ValueError` with a clear msg.
-- Follow existing naming/idioms; prefer adding to an existing module over creating a near-duplicate.
-- New metric ⇒ register in the registry, export it, add a docstring with the formula + a citation.
+- Follow existing naming/idioms; prefer adding to an existing group over creating a near-duplicate.
+- New metric ⇒ add a method to the right group class (auto-registered as `<group>.<name>` via
+  `_register_group`); name the `EvalResult` `<group>.<short>`; add the formula + a citation.
+- Use classess and methods with pandas style docstrings instead of open functions
 
 ## Testing patterns
 - `pytest` + `pytest-cov`; tests mirror `src/` layout under `tests/`. Target ≥90% line coverage on `core`.
@@ -36,8 +39,10 @@ behind one consistent API. Import name `ds_llm_eval`; repo `ds-llm-eval` (branch
 - **Citations required** for every metric formula and design choice (see `docs/research.md`).
 - **Backward compatibility:** public API in `__init__.py` is stable; deprecate before removing.
 - **Scope discipline:** stick to the requested change; do not refactor unrelated code or bump deps uninvited.
-- **Commit/push only when asked.** Branch off `master`; never commit secrets, data, or generated artifacts.
+- **Commit/push only when asked.** Branch off `master`; never commit secrets, data, or generated artifacts. feature -> develop -> master strategy
 - Run `ruff check`, `ruff format`, `mypy`, and `pytest` before declaring work done; report failures honestly.
+- No mention of claude code or anthropic assisstance anywhere. keep it clean 
+- Do not git commit yourself. Instead prepare instructions in handoff.md for me to run later. Git strategy: feature branch -> develop -> master through PR
 
 ## Commands
 - Setup: `pip install -e ".[dev,all]"` · Lint: `ruff check . && ruff format --check .`

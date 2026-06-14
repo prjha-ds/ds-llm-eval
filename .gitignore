@@ -29,6 +29,9 @@ htmlcov/
 .env.*
 !.env.example
 
+# claude
+*.claude
+
 # OS / editor
 .DS_Store
 .idea/
@@ -39,3 +42,9 @@ data/
 *.parquet
 *.feather
 !examples/**/*.parquet
+
+# docs — keep the working handoff and the auto-generated metric reference out of git
+# (narrowed from docs/*.md so the mkdocs site pages can be committed)
+docs/handoff.md
+docs/reference.md
+site/
