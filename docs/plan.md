@@ -20,37 +20,60 @@ observability sink (Langfuse).
 ## Milestone 0 — Foundation (✅ shipped in `0.0.1`)
 - ✅ `src/` layout, packaging (`hatchling`), Apache-2.0, CI matrix (3.10–3.12), pre-commit.
 - ✅ Core contracts: `EvalResult`/`EvalReport`, `Metric` protocol, metric registry, validators.
-- ✅ Search: precision/recall/F1@k, MRR, MAP, NDCG (binary + graded).
-- ✅ Recommendation: hit rate, NDCG, catalog coverage, novelty.
-- ✅ LLM: exact match, token-F1; lazy RAGAS adapter; Langfuse score sink.
-- ✅ Quality gates green: `ruff`, `mypy --strict`, `pytest` (41 tests, ~93% coverage).
+- ✅ **Metrics grouped by family** (class + singleton, used irrespective of task):
+  `ranking` (precision/recall/F1@k, MRR, MAP, NDCG binary+graded, hit_rate@k — search/rec/RAG),
+  `beyond_accuracy` (catalog coverage, novelty), `text` (exact match, token-F1),
+  `llm_judge` (lazy RAGAS adapter). Langfuse score sink.
+- ✅ **Logging mechanism** (`ds_llm_eval.logging`): `EvalLogger` ABC + Console/JSONL/Langfuse/Multi
+  sinks, run-id + metadata, context-managed.
+- ✅ **Benchmark catalog** (`ds_llm_eval.benchmarks`): `BenchmarkSpec` registry (SWE-bench, HumanEval,
+  MMLU, GPQA, GAIA, τ-bench, BEIR, MTEB, …) + `to_eval_result` mapping. Adapters = roadmap.
+- ✅ Quality gates green: `ruff`, `mypy --strict`, `pytest` (56 tests, ~95% coverage).
 
-## Milestone 1 — Ergonomics & data ingestion (🟡 next)
-- ⬜ **Click-log ingestion** for search: turn raw `(query, doc, clicked)` logs into qrels/runs
-  (DataFrame in, batched lists out), with position-bias caveats documented.
-- ⬜ **`compare()` + significance testing** (paired t-test / Wilcoxon) across runs — pattern from
-  ranx/Elliot ([research §1, §5](research.md)).
-- ⬜ Polymorphic inputs (dict / DataFrame / arrays) on the public metric functions.
-- ⬜ `evaluate(predictions, ground_truth, metrics=[...])` convenience that runs a metric set and
-  returns an `EvalReport`.
+## Milestone 1 — Ergonomics & data ingestion (✅ shipped)
+- ✅ **Click-log ingestion** (`ingestion/clicklogs.py`): `ClickLogIngestor` turns a `(query, doc,
+  clicked[, rank/score])` DataFrame into a `RankingDataset`; position-bias caveat documented + cited.
+- ✅ **`RunComparison` + significance testing** (`comparison.py`): per-query paired two-sided t-test
+  and Wilcoxon (pure-Python, no SciPy) vs. a baseline, with `ComparisonResult.significant_runs()`.
+- ✅ Polymorphic inputs (dict-keyed or batched sequences) on the `ranking` and `beyond_accuracy` methods.
+- ✅ `Evaluator` (`evaluation.py`): run a set of registered metrics over one dataset → `EvalReport`,
+  auto-logging through an optional logger.
 
-## Milestone 2 — Breadth of metrics (⬜)
-- ⬜ Recsys: precision/recall@k, MAP@k, diversity (intra-list), personalization, Gini/Shannon
-  (beyond-accuracy set per RecBole/recmetrics).
-- ⬜ Search: R-precision, success@k, bpref, graded MAP.
-- ⬜ LLM: ROUGE/BLEU reference metrics; structured-output (JSON) correctness; agentic tool-call
-  accuracy and goal accuracy (deterministic where possible) ([research §3](research.md)).
+## Milestone 2 — Breadth of metrics (✅ shipped)
+- ✅ Beyond-accuracy: intra-list diversity, personalization, Gini index, Shannon entropy
+  (+ existing catalog coverage, novelty).
+- ✅ Search/ranking: R-precision, bpref, Rank-Biased Precision (+ existing P/R/F1@k, MRR, MAP, NDCG,
+  hit_rate@k = success@k). Graded MAP via `average_precision` on graded relevance.
+- ✅ LLM/text: BLEU (with smoothing), ROUGE-L, JSON structured-output correctness.
+- ✅ Agentic (`metrics/agentic.py`): tool-call accuracy / F1, trajectory match (strict/unordered/
+  subset/superset), final-state goal accuracy — deterministic ([research §3](research.md)).
+- All formulas verified against primary sources (cited in each docstring).
 
-## Milestone 3 — Backends & integrations (⬜)
-- ⬜ Optional **delegation to validated IR backends** (`pytrec_eval` / `ranx`) behind a stable
-  façade, defaulting to our pure-Python implementations — the ir_measures lesson ([research §5](research.md)).
-- ⬜ Langfuse **`dataset.run_experiment`** runner (not just the score sink); pin a Langfuse major.
-- ⬜ RAGAS adapter hardening + a TruLens/Phoenix bridge investigation.
+## Milestone 3 — Backends, benchmarks & integrations (✅ shipped)
+- ✅ **IR backend delegation** (`backends/ir.py`): `RanxBackend` / `PyTrecEvalBackend` behind a
+  stable façade (`evaluate_with_backend`), lazy-imported under the `backends` extra; pure-Python
+  ranking stays the default — the ir_measures lesson ([research §5](research.md)).
+- ✅ **Benchmark runner adapters** (`benchmarks/adapters.py`): offline `LocalRetrievalBenchmark`
+  (BEIR/MTEB-style nDCG via `ranking`), plus lazy `LmEvalAdapter` (MMLU/GPQA/MBPP) and
+  `SweBenchAdapter` (Docker preflight). Each behind its `benchmarks-*` extra ([research §6](research.md)).
+- ✅ Langfuse **`run_langfuse_experiment`** (`dataset.run_experiment`); langfuse pinned `>=3`.
+- 🟡 RAGAS adapter present; **TruLens/Phoenix bridge** remains an investigation item.
 
-## Milestone 4 — DX & release (⬜)
-- ⬜ Declarative config entry point (Elliot-style YAML) for reproducible experiment runs.
-- ⬜ Docs site (mkdocs) + metric reference auto-generated from the registry.
-- ⬜ Benchmarks vs. TREC Eval / ranx for correctness parity; publish `0.1.0` to PyPI.
+## Milestone 4 — DX & release (✅ shipped)
+- ✅ **Declarative YAML/dict config** (`config.py`): `ExperimentRunner.from_yaml(...).run()` wires
+  dataset (click-log CSV) + metrics + loggers into one reproducible run → `EvalReport`.
+- ✅ **mkdocs site** (`mkdocs.yml`, `docs/index.md`) with a **registry-driven metric reference**
+  auto-generated by `scripts/gen_reference.py` (`reference.MetricReferenceGenerator`); `mkdocs build
+  --strict` is green and wired into CI.
+- ✅ **Live integration tests** (`tests/integration/`, `@pytest.mark.integration`): ranx / pytrec_eval
+  parity vs. our pure-Python ranking — auto-skip when the engine isn't installed.
+- ✅ **Release prep**: version `0.1.0` (Beta); `python -m build` produces sdist+wheel; CI `build` job
+  uploads artifacts. PyPI upload itself is a maintainer step (see `docs/handoff.md`).
+
+## Remaining / future
+- TruLens / Phoenix bridge investigation ([research §3](research.md)).
+- More benchmark adapters (HumanEval/BigCodeBench/MTEB loaders); online/counterfactual (IPS) metrics.
+- Publish `0.1.0` to PyPI (maintainer: `twine upload`).
 
 ## Explicitly out of scope (for now)
 - Training/serving models (we evaluate, not train).
