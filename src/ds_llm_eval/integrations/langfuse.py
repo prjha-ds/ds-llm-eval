@@ -16,10 +16,29 @@ https://langfuse.com/docs/evaluation/evaluation-methods/scores-via-sdk
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable, Sequence
 from typing import Any
 
 from ..core import EvalResult
+
+
+def resolve_langfuse_client(client: object | None = None) -> Any:
+    """Return ``client`` if given, else lazily construct a Langfuse client.
+
+    Constructing from the environment requires ``pip install "ds-llm-eval[llm]"``
+    plus ``LANGFUSE_PUBLIC_KEY`` / ``LANGFUSE_SECRET_KEY``. Raises a clear
+    ``ImportError`` naming the extra when the SDK is missing.
+    """
+    if client is not None:
+        return client
+    try:
+        from langfuse import Langfuse
+    except ImportError as exc:  # pragma: no cover - exercised via mocks
+        raise ImportError(
+            "Langfuse integration requires the optional 'llm' extra. "
+            'Install it with: pip install "ds-llm-eval[llm]"'
+        ) from exc
+    return Langfuse()
 
 
 def log_results_to_langfuse(
@@ -46,16 +65,7 @@ def log_results_to_langfuse(
     int
         The number of scores logged.
     """
-    lf: Any = client
-    if lf is None:
-        try:
-            from langfuse import Langfuse  # type: ignore[import-not-found]
-        except ImportError as exc:  # pragma: no cover - exercised via mocks
-            raise ImportError(
-                "Langfuse integration requires the optional 'llm' extra. "
-                'Install it with: pip install "ds-llm-eval[llm]"'
-            ) from exc
-        lf = Langfuse()
+    lf: Any = resolve_langfuse_client(client)
 
     count = 0
     for result in results:
@@ -68,3 +78,43 @@ def log_results_to_langfuse(
         )
         count += 1
     return count
+
+
+def run_langfuse_experiment(
+    dataset_name: str,
+    task: Callable[..., Any],
+    evaluators: Sequence[Callable[..., Any]],
+    *,
+    run_name: str,
+    client: object | None = None,
+    **kwargs: Any,
+) -> Any:
+    """Run a Langfuse dataset experiment (SDK v4+ ``dataset.run_experiment``).
+
+    Fetches the dataset by name and runs ``task`` over each item, applying
+    ``evaluators`` to score the outputs; a UI-visible dataset run is created for
+    cross-run comparison.
+
+    Parameters
+    ----------
+    dataset_name : str
+        Name of the Langfuse dataset to run against.
+    task : callable
+        Processes each item (receives the item; returns the output).
+    evaluators : sequence of callable
+        Item-level evaluators returning Langfuse ``Evaluation`` objects.
+    run_name : str
+        Name for this experiment run.
+    client : object, optional
+        Existing Langfuse client; constructed lazily from the env if ``None``.
+    **kwargs
+        Forwarded to ``run_experiment`` (e.g. ``run_evaluators``, ``metadata``).
+
+    Returns
+    -------
+    Any
+        Whatever ``dataset.run_experiment`` returns (the run result object).
+    """
+    lf: Any = resolve_langfuse_client(client)
+    dataset = lf.get_dataset(dataset_name)
+    return dataset.run_experiment(name=run_name, task=task, evaluators=list(evaluators), **kwargs)

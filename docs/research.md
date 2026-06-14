@@ -149,6 +149,46 @@ the LLM/agentic surface and to one observability sink (Langfuse).
   `make_genai_metric`. The classic `mlflow.evaluate` LLM path is now *legacy* vs. `mlflow.genai`.
   ([LLM evaluate doc](https://www.mlflow.org/docs/2.21.3/llms/llm-evaluate/))
 
+### Evaluation paradigms — when to use what
+- **Reference-based** (BLEU/ROUGE): deterministic and cheap, but "relatively low correlation with
+  human judgments" on creative/open-ended tasks. Use only where a fixed gold answer exists.
+  ([arXiv 2303.16634](https://arxiv.org/abs/2303.16634))
+- **Reference-free / LLM-as-judge**: applies where no gold reference exists. G-Eval (CoT +
+  form-filling) reaches Spearman 0.514 with humans on summarization; GPT-4-as-judge hits ~85%
+  agreement with human experts on MT-Bench (above the 81% human–human agreement) — but the judge's
+  own model becomes the source of truth.
+  ([G-Eval 2303.16634](https://arxiv.org/abs/2303.16634), [MT-Bench 2306.05685](https://arxiv.org/html/2306.05685))
+
+### Agentic / tool-use / trajectory evaluation
+The agentic dimension scores the *path* (tools, arguments, order, goal), not just the final string.
+- **Tool-call accuracy.** RAGAS `ToolCallAccuracy` (sequence + argument correctness, 0–1) and
+  `ToolCallF1` (unordered precision/recall); DeepEval `ToolCorrectness` is **deterministic**
+  (name/arg/output/order matching), invoking an LLM judge only when `available_tools` are supplied.
+  ([RAGAS agents](https://docs.ragas.io/en/stable/concepts/metrics/available_metrics/agents/),
+  [DeepEval ToolCorrectness](https://deepeval.com/docs/metrics-tool-correctness))
+- **Trajectory matching.** LangChain AgentEvals provides deterministic strict/unordered/subset/
+  superset matchers plus an optional-reference LLM judge.
+  ([agentevals](https://github.com/langchain-ai/agentevals))
+- **Goal / task completion.** τ-bench compares the **final DB state** to an annotated goal
+  (programmatic); DeepEval `TaskCompletion` is LLM-judged on the outcome.
+  ([τ-bench 2406.12045](https://arxiv.org/abs/2406.12045),
+  [DeepEval TaskCompletion](https://deepeval.com/docs/metrics-task-completion))
+- **Multi-turn.** DeepEval `KnowledgeRetention` / `ConversationCompleteness` / `RoleAdherence`
+  (LLM-judged ratios); RAGAS `TopicAdherenceScore` (P/R/F1).
+  ([DeepEval multi-turn](https://deepeval.com/guides/guides-multi-turn-evaluation-metrics))
+
+### LLM-as-judge bias (and mitigations)
+- **Position bias** — judges favor a position regardless of content; GPT-4 swap-consistency ~65%
+  (Claude-v1 23.8%, GPT-3.5 46.2%); a 15-judge / 150k-instance study confirms it is systematic, not
+  chance. ([MT-Bench 2306.05685](https://arxiv.org/html/2306.05685),
+  [2406.07791](https://arxiv.org/abs/2406.07791))
+- **Verbosity bias** — favor longer answers; on a repetition attack GPT-3.5/Claude-v1 failed 91.3%
+  vs GPT-4's 8.7%. **Self-preference** — GPT-4 ~+10%, Claude-v1 ~+25%.
+  ([2306.05685](https://arxiv.org/html/2306.05685), [2410.21819](https://arxiv.org/abs/2410.21819))
+- **Mitigations:** position swapping (count a win only if consistent both ways); reference-guided
+  judging (math-grading failures 70%→15%); few-shot judging (GPT-4 consistency 65%→77.5%); CoT
+  (can backfire by replicating supplied errors). ([2306.05685](https://arxiv.org/html/2306.05685))
+
 ---
 
 ## 4. Pitfalls (carry into our design & docs)
@@ -168,6 +208,13 @@ the LLM/agentic surface and to one observability sink (Langfuse).
   ([Shaped.ai](https://www.shaped.ai/blog/evaluating-recommender-models-offline-vs-online-evaluation))
 - **License diligence.** Phoenix is Elastic-2.0 (source-available); recmetrics is dormant. → Prefer
   permissive, maintained backends; keep heavy/optional ones behind extras.
+- **LLM judges are biased, not just noisy** — position/verbosity/self-preference biases are
+  systematic. → When model-graded metrics land, default bias mitigations on (position swapping,
+  reference-guided prompts). ([2306.05685](https://arxiv.org/html/2306.05685))
+- **Benchmarks need sandboxes/datasets pip can't provide.** SWE-bench needs Docker (~120GB);
+  HumanEval ships with execution disabled; GAIA's test set is gated. → Adapters preflight-check for
+  the sandbox/auth and raise a clear error (no silent degradation).
+  ([SWE-bench eval](https://www.swebench.com/SWE-bench/guides/evaluation/))
 
 ---
 
@@ -192,6 +239,58 @@ the LLM/agentic surface and to one observability sink (Langfuse).
    Wilcoxon and coverage/novelty/diversity. *(novelty + coverage done; significance testing on roadmap.)*
 7. **Validate correctness against references** (ranx vs. TREC Eval): test each metric against a
    hand-computed or reference value. *(done via the worked-example test triad.)*
+8. **Deterministic agentic metrics first.** Tool-call/trajectory matching against ground truth
+   (DeepEval `ToolCorrectness`, RAGAS `ToolCallAccuracy/F1`, AgentEvals matchers) is pure comparison
+   → default tier; LLM-judged agentic metrics → opt-in. *(roadmap.)*
+9. **Catalog benchmarks; delegate to official harnesses.** Don't reimplement pass@k/% resolved —
+   normalize harness output into `EvalResult`. *(registry done; adapters on roadmap — see §6.)*
+10. **A logging mechanism is part of the package.** Every `EvalResult` flows through pluggable
+    loggers (console / JSONL / Langfuse / fan-out) with run-id + metadata. *(done — `ds_llm_eval.logging`.)*
+
+---
+
+## 6. Benchmark-based evaluation
+
+Standardized benchmarks complement metric computation: they answer "how does my model/agent rank on
+a shared task?". `ds-llm-eval` ships a **catalog** (`ds_llm_eval.benchmarks`, the `BenchmarkSpec`
+registry) today; runner **adapters** that delegate to official harnesses are on the roadmap.
+
+| Benchmark | Domain | Metric | Harness | Exec | License |
+|-----------|--------|--------|---------|------|---------|
+| [SWE-bench Verified](https://github.com/swe-bench/SWE-bench) | llm (code) | % resolved | `swebench` | Docker | MIT |
+| [HumanEval](https://github.com/openai/human-eval) | llm (code) | pass@k | `human-eval` | sandbox | MIT |
+| [BigCodeBench](https://github.com/bigcode-project/bigcodebench) | llm (code) | pass@1 | `bigcodebench` | sandbox | Apache-2.0 |
+| [LiveCodeBench](https://arxiv.org/abs/2403.07974) | llm (code) | pass@1 | repo | sandbox | see repo |
+| [MMLU](https://arxiv.org/abs/2009.03300) / [MMLU-Pro](https://arxiv.org/abs/2406.01574) | llm (knowledge) | accuracy | `lm_eval` | pure | MIT |
+| [GPQA Diamond](https://arxiv.org/abs/2311.12022) | llm (reasoning) | accuracy | `lm_eval` | pure | MIT |
+| [GAIA](https://arxiv.org/abs/2311.12983) | llm (agent) | accuracy | HF leaderboard | gated | gated |
+| [τ-bench](https://arxiv.org/abs/2406.12045) | llm (agent) | pass^k | `tau-bench` | LLM+sim | MIT |
+| [AgentBench](https://arxiv.org/abs/2308.03688) | llm (agent) | success | `AgentBench` | exec | Apache-2.0 |
+| [BEIR](https://arxiv.org/abs/2104.08663) | search | nDCG@10 | `beir` | pure | Apache-2.0 |
+| [MTEB](https://arxiv.org/abs/2210.07316) | search | nDCG@10 | `mteb` | pure | Apache-2.0 |
+
+Runners devs actually use: **EleutherAI lm-evaluation-harness** (`lm_eval`, MIT, 60+ tasks incl.
+MMLU/GPQA/MBPP — the HF Open-LLM-Leaderboard backend, [repo](https://github.com/EleutherAI/lm-evaluation-harness))
+and **Stanford HELM** (`crfm-helm`, Apache-2.0, multi-metric incl. bias/toxicity/efficiency,
+[repo](https://github.com/stanford-crfm/helm)).
+
+### Designing the `benchmarks` module
+1. **Map benchmarks to the existing domains; lead with search ones that reuse our metrics.** BEIR &
+   MTEB-retrieval both report nDCG@10 — feed their qrels/runs through the existing `ranking.ndcg_at_k`.
+2. **Delegate, don't reimplement.** Thin adapters shell out to `swebench`/`human-eval`/`lm_eval`/
+   `mteb`/`tau-bench` and parse their JSON into `EvalResult`; the harness output is the source of truth.
+3. **Standardize knowledge/MC on lm-evaluation-harness.** One `lm_eval` adapter (`simple_evaluate`)
+   covers MMLU, MMLU-Pro, GPQA, MBPP at once.
+4. **Heavy/sandbox deps → optional extras + preflight checks.** `benchmarks-{search,knowledge,code,
+   swe,agents}` extras, lazy imports, and explicit "Docker/dataset/API key missing" errors.
+5. **Map onto `EvalResult` with name fidelity.** `bench.<id>.<metric>` (e.g. `bench.humaneval.pass@1`),
+   `n` = instances, `params` = harness knobs, `metadata` = harness version / model id / license /
+   contamination cutoff. *(implemented in `BenchmarkSpec.to_eval_result`.)*
+6. **Encode license & gating in metadata.** GAIA is gated (HF terms, private test set) — support only
+   the public validation split locally and surface terms in `metadata`.
+
+> Unverified: LiveCodeBench and GAIA license terms could not be confirmed from primary sources —
+> treat as "see repo" / "gated" until checked directly.
 
 ## Open questions
 - Unifying data model bridging labeled-relevance IR/recsys (Qrels/Run) with reference-free LLM eval.
